@@ -1,0 +1,310 @@
+---
+title: "Relation between College Costs and Expected Earnings"
+author: "Edward Harvey, Yifan Li, Sandani Kumanayake"
+date: "`r Sys.Date()`"
+output:
+  slidy_presentation: default
+  beamer_presentation: default
+  ioslides_presentation: default
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+
+
+
+# Introduction
+
+## Question
+
+- Do high college costs mean high pay-off in future earnings?
+
+- What about other factors? 
+  + percentage of STEM majors
+  + diversity
+
+## Data
+
+Accessed via Kaggle.com. Four files from two sources:
+
+-	Diversity by college/university for 2014, from the Chronicle of Higher Education (4575 unique values)
+
+-	Tuition and fees by college/university for 2018-2019, from the Chronicle of Higher Education (2 datasets) (2938 and 3664 unique values)
+
+-	Salary potential data comes, from payscale.com (934 unique values)
+
+## Variables
+
+- Costs 
+  + in_state_total
+  + out_of_state_total
+- Expected Earnings
+  + early_career_pay
+  + mid_career_pay
+- Others
+  + stem_percent
+  + pct_women
+  + pct_minority
+
+## Weaknesses
+
+- Different time periods.
+
+- Not whole population.
+
+- Many NA values.
+
+## Cleaning
+
+1. Starting with diversity data
+    +	Selected university name, state, and total enrollment variables
+    +	Pivoted wider by name and state to get counts for different student demographics
+2. Joined salary potential data with newly pivoted diversity data based on university name and state 
+3. Jointed tuition cost data to new data frame
+4. Cleaned second tuition cost data and joined to new data frame
+    +	Pivoted wider to get cost breakdown by income level 
+    +	Joined with new data frame by name and state
+    +	Ultimately did not use this data in the analysis
+5. Removed NAs as appropriate for individual plots
+6. Calculated percentages, geographic regions, and other minor variable changes as necessary for individual plots
+
+
+```{r, include=FALSE}
+library(tidyverse)
+library(usdata)
+library(ggplot2)
+library(plotly)
+library(forcats)
+library(shiny)
+library(ggpubr)
+```
+
+
+```{r cleanup, echo=TRUE}
+setwd("/Users/sandanikumanayake/Desktop/STAT 697/HW 05/Final/")
+
+#read in diversity dataset
+diversity <- read.csv2("diversity_school.csv", sep=",")
+
+#separate total enrollment before pivot, take distinct entries by name and state
+total_enrollment <- diversity %>% select(name, state, total_enrollment) %>% 
+  distinct()
+
+#drop total enrollment from diversity
+diversity <- diversity %>% select(-total_enrollment)
+
+#convert category and state to factor (not sure if this makes a difference?)
+diversity$category <- as.factor(diversity$category)
+diversity$state <- as.factor(diversity$state)
+
+
+#pivot demographic data (saved as new df)
+diversity_pivot <- diversity %>% 
+  filter(!is.na(name)) %>% 
+  pivot_wider(id_cols=c(name, state), names_from=category, values_from = enrollment)
+
+#here I rejoin the total enrollment and diversity_pivot is complete
+
+diversity_pivot <- left_join(diversity_pivot, total_enrollment, by=c("name", "state"))
+
+
+#load in the salary potential data
+salary_potential <- read.csv2("salary_potential.csv", sep=",")
+salary_potential <- salary_potential %>% rename("state" = "state_name")
+
+#join diversity and salary potential, save as new df
+df <- left_join(diversity_pivot, salary_potential, by=c("name", "state"))
+
+#join df with tuition_cost
+tuition_cost <- read.csv2("tuition_cost.csv", sep=",")
+df <- left_join(df, tuition_cost, by=c("name", "state"))
+
+#drop state code (redundant) and rank(?)
+df <- df %>% select(-c("state_code","rank"))
+
+
+#load tuition income dataset
+tuition_income <- read.csv2("tuition_income.csv", sep=",")
+
+#select 2018 only, the most recent data (other datasets do not have multiple years)
+tuition_income <- tuition_income %>% 
+  filter(year==2018) %>% 
+  select(name, state, total_price, campus) %>% 
+  distinct()
+
+#convert to factor (is this necessary?)
+tuition_income$campus[which(tuition_income$name=="Laurel Technical Institute" & tuition_income$total_price==16168)] <- 'On Campus'
+
+tuition_income$campus <- as.factor(tuition_income$campus)
+  
+#pivot wider
+tuition_income_pivot <- tuition_income %>% pivot_wider(names_from = campus, values_from = total_price)
+
+#change null values to NA for On Campus
+tuition_income_pivot$`On Campus`[sapply(tuition_income_pivot$`On Campus`, is.null)] <- NA
+
+#convert state codes to state
+tuition_income_pivot$state <- abbr2state(tuition_income_pivot$state)
+
+
+#join 
+df <- left_join(df, tuition_income_pivot, by=c("name", "state"))
+
+
+colnames(tuition_income_pivot[,3:4]) <- c("on_campus","off_campus")
+
+#save as RDS file
+write.csv2(df, file="df.csv")
+
+saveRDS(df, file="df.rds")
+
+```
+
+
+# Plots
+
+## Costs
+
+```{r, fig.width=10, fig.height=5, fig.align='center'}
+fig <- df %>%
+  filter(type != "For Profit") %>%
+  plot_ly(type = 'violin') 
+
+fig <- fig %>%
+  add_trace(
+    x = ~type,
+    y = ~in_state_total,
+    legendgroup = 'In State',
+    scalegroup = 'In State',
+    name = 'In State',
+    side = 'negative',
+    box = list(
+      visible = T
+      ),
+    meanline = list(
+      visible = T
+      ),
+    color = I("blue")
+    ) 
+
+fig <- fig %>%
+  add_trace(
+    x = ~type,
+    y = ~out_of_state_total,
+    legendgroup = 'Out of State',
+    scalegroup = 'Out of State',
+    name = 'Out of State',
+    side = 'positive',
+    box = list(
+      visible = T
+      ),
+    meanline = list(
+      visible = T
+      ),
+    color = I("green"
+    ) )
+
+fig %>%
+  layout(
+    xaxis = list(
+      title = ""
+      ),
+    yaxis = list(
+      title = "Total Cost",
+      zeroline = F
+      ),
+    # violingap = 0,
+    # violingroupgap = 0,
+    violinmode = 'overlay'
+    )
+```
+
+## Expected Earnings
+
+```{r}
+df2 = df
+# Convert early_career_pay column to numeric
+df2$early_career_pay <- as.numeric(df2$early_career_pay)
+
+# Calculate median early_career_pay by type (Used median because distributions are not symmetric)
+median_values <- aggregate(early_career_pay ~ type, data = na.omit(df2), FUN = median)
+
+# Get the total number of colleges
+total_colleges <- nrow(na.omit(df2))
+
+# Define colors for median lines
+median_colors <- c("darkgreen", "darkorange")
+
+```
+
+```{r, fig.width=10, fig.height=5, fig.align='center'}
+# Plot histogram of early_career_pay by type without NA values
+ggplot(data = na.omit(df2), aes(x = early_career_pay, color = type, fill = type)) +
+  geom_histogram(aes(y = ..count..), binwidth = 5000, color = "black", alpha = 0.5, position="identity") +
+  geom_vline(data = median_values, aes(xintercept = early_career_pay, color = type),
+             linetype = "dashed", size = 1) +
+  scale_fill_brewer(palette = "Set2") +
+  scale_color_manual(values = median_colors) +
+  theme_minimal() +
+  labs(x = "Early Career Pay ($)", y = "Count", fill = "Type") +
+  ggtitle("Distribution of Early Career Pay by Type") +
+  theme(plot.title = element_text(size = 20, face = "bold"),
+        axis.title = element_text(size = 16),
+        axis.text = element_text(size = 14),
+        legend.title = element_text(size = 14),
+        legend.text = element_text(size = 12))+
+  guides(fill = guide_legend(order = 1), color = guide_legend(order = 2, title = "Median"))
+```
+
+## Scatter Plots
+
+```{r}
+#named vectors for explanatory and response variables
+explanatory_choices <-
+  c(
+    "Total Cost" = "out_of_state_total",
+    "% STEM" = "stem_percent",
+    "% Women" = "pct_women",
+    "% Minority" = "pct_minority"
+  )
+
+response_choices <-
+  c(
+    "Early-Career Earnings" = "early_career_pay",
+    "Mid-Career Earnings" = "mid_career_pay"
+  )
+
+
+
+#load the data
+df <- readRDS("df.rds")
+
+#convert deomgraphic data to percentages
+df$pct_minority <- df$`Total Minority`/df$total_enrollment
+df$pct_women <- df$Women/df$total_enrollment
+
+#add variable for region
+df$region <- setNames(state.region, state.name)[df$state]
+```
+
+
+```{r}
+# Run the application 
+shinyAppFile("app_v3.R")
+```
+
+## Conclusion
+
+- Some of the more expensive private universities show higher career earnings, but for many this is not the case
+
+- Public universities show a more positive and linear relationship between costs and future earnings
+
+- Strong positive relationship between % STEM and future earnings
+
+- Universities with highest future earnings have a roughly balanced gender mix
+
+- Male-dominated schools tend to be technical universities with higher future earnings compared to female-dominated schools
+
