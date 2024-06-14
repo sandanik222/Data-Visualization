@@ -1,0 +1,347 @@
+---
+title: "Exploring Land Value Disparities in New York City"
+author: "Denis Folitse, Sandani Kumanayake, and Qi Chen"
+date: "`r Sys.Date()`"
+output:
+  slidy_presentation: default
+  beamer_presentation: default
+  ioslides_presentation: default
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+# Introduction
+
+
+## Research Questions
+
+- Does the location of the property affect the Average land value in NYC?
+- Which borough has the average highest land value?
+
+## Data
+
+- The Primary Land Use Tax Lot Output (PLUTO) is the data source used for this project.
+
+- PLUTO is being provided by the Department of City Planning (DCP) on DCP’s website for informational purposes only.
+
+- The original data set contains data of around 859877 properties in New York City.
+
+- PLUTO includes 92 variables that provide detailed information on land use, building characteristics, and tax assessment values for each property in the city.
+
+
+## Data Cleaning
+
+- Original Data set had many missing values.
+- Disproportionate stratified sampling was used to select a subset of data from the original PLUTO data set.
+- The subset included 200 random properties from each borough, resulting in a new data set.
+- Stratified sampling ensures that each borough is represented in the sample.
+
+
+##
+
+```{r, fig.width=10, fig.height=5, fig.align='center'}
+library(DiagrammeR)
+
+grViz("
+  digraph flowchart {
+    node [fontname = arial, shape = box, style = filled, fillcolor = lightblue, margin = 0.15, fontsize = 10]
+    edge [fontname = arial, fontsize = 9]
+    
+    Data [label = 'Data Set\n859,877 properties\n92 variables']
+    WithoutMissingValues [label = 'Data Set With Selected Variables\n(Without Missing Values)']
+    Manhattan [label = 'Manhattan\n40098 properties']
+    Bronx [label = 'Bronx\n83153 properties']
+    Queens [label = 'Queens\n311881 properties']
+    Brooklyn [label = 'Brooklyn\n265301 properties']
+    StatenIsland [label = 'Staten Island\n115208 properties']
+  
+    
+    Manhattan_1 [label = 'Manhattan\n200 properties']
+    Bronx_1 [label = 'Bronx\n200 properties']
+    Queens_1 [label = 'Queens\n200 properties']
+    Brooklyn_1 [label = 'Brooklyn\n200 properties']
+    StatenIsland_1 [label = 'Staten Island\n200 properties']
+    SampleData [label = 'Sample Data Set\n1000 properties']
+    
+    Data -> WithoutMissingValues
+    WithoutMissingValues -> Manhattan
+    WithoutMissingValues -> Bronx
+    WithoutMissingValues -> Queens
+    WithoutMissingValues -> Brooklyn
+    WithoutMissingValues -> StatenIsland
+    
+    Manhattan -> Manhattan_1
+    Bronx -> Bronx_1
+    Queens -> Queens_1
+    Brooklyn -> Brooklyn_1
+    StatenIsland -> StatenIsland_1
+    
+    Manhattan_1 -> SampleData
+    Bronx_1 -> SampleData
+    Queens_1 -> SampleData
+    Brooklyn_1 -> SampleData
+    StatenIsland_1 -> SampleData
+  }
+")
+
+
+```
+
+
+## Variables
+
+- **Borough:** The borough in which the property is located.
+- **Block:** The tax block in which the property is located. It contains a one to five-digit tax block number. Each tax block is unique within a borough.
+- **lot:** The number of the tax lot. It contains a one to four-digit tax lot number. Each tax lot
+  is unique within a tax block.
+- **schooldist:** The school district in which the property lot is located.
+- **policeprct:** The police precinct in which the property is located.
+- **healthcenterdistrict:**	The health center district in which the property is located.
+- **sanitdistrict:** The sanitation district that services the property.
+- **ave_land:** Average price of the land (Dollars per Square Foot)
+  
+
+```{r, include=FALSE}
+# Load packakages --------------------------------------------------------------
+library(leaflet)
+library(leaflet.extras)
+library(sf)
+library(tidyverse)
+library(plotly)
+
+# Read in Dataset and `kml` files ----------------------------------------------
+dat = read.csv('dataset_group2.csv')
+nyc_boundary = st_read('nyc_boundary.kml')
+nyc_boundary = nyc_boundary %>% rename(borough = Name)
+nyc_school = st_read('nyc_school.kml')
+nyc_school = nyc_school %>% rename(schooldist = Name)
+
+# Manipulate data --------------------------------------------------------------
+
+# Change the name of boroughs in `dat`
+dat_new = dat %>% 
+  mutate(borough = str_replace(borough, 'BK', 'Brooklyn')) %>%
+  mutate(borough = str_replace(borough, 'BX', 'Bronx')) %>%
+  mutate(borough = str_replace(borough, 'MN', 'Manhattan')) %>%
+  mutate(borough = str_replace(borough, 'QN', 'Queens')) %>%
+  mutate(borough = str_replace(borough, 'SI', 'Staten Island'))
+dat_new$schooldist = as.character(dat_new$schooldist)
+dat_new$policeprct = as.character(dat_new$policeprct)
+
+# Add three new columns `ave_borough`(average land value in corresponding borough), 
+# `ave_school`(average land value in corresponding school district within each borough), 
+# `ave_police`(average land value in corresponding police precinct district within 
+# each borough) to `dat_new`.
+
+dat_new = dat_new %>% group_by(borough) %>% mutate(ave_borough = mean(ave_land)) 
+dat_new = dat_new %>% group_by(borough, schooldist) %>% mutate(ave_school = mean(ave_land))
+dat_new = dat_new %>% group_by(borough, policeprct) %>% mutate(ave_police = mean(ave_land))
+
+
+# For nyc_boundary: add column `ave_borough`
+dat_borough = dat_new %>% group_by(borough) %>% summarise(ave_borough = mean(ave_land))
+nyc_boundary = nyc_boundary %>% left_join(dat_borough, by = 'borough')
+
+# For nyc_school: add column `ave_school`
+dat_school = dat_new %>% group_by(borough, schooldist) %>% summarise(ave_school = mean(ave_land), .groups = 'drop')
+nyc_school = nyc_school %>% left_join(dat_school, by = 'schooldist')
+
+```
+
+## Visualize the 5 boroughs in a map & Boxplot
+- Rank of average land value: 
+Manhattan > Brooklyn > Queens > Bronx > Staten Island
+```{r}
+# Plot leaflet map for 5 boroughs
+#quantile(nyc_boundary$ave_borough)
+bins = c(0, 4, 6.5, 7, 12, 142)
+pal = colorBin('YlOrRd', domain = nyc_boundary$ave_borough, bins = bins)
+labels <- sprintf(
+  "<strong>Borough:</strong> %s<br/><strong>Average Land Value:</strong> %g",
+  nyc_boundary$borough, nyc_boundary$ave_borough
+) %>% 
+  lapply(htmltools::HTML)
+map = leaflet(nyc_boundary) %>%
+  addTiles() %>%
+  addPolygons(fillColor = ~pal(ave_borough),
+              weight = 2,
+              opacity = 1,
+              color = 'white',
+              dashArray = '3',
+              fillOpacity = 0.7, 
+              highlight = highlightOptions(weight = 5,
+                                           color = "#666",
+                                           dashArray = "",
+                                           fillOpacity = 0.7,
+                                           bringToFront = TRUE),
+              label = labels,
+              labelOptions = labelOptions(style = list("font-weight" = "normal", 
+                                                       padding = "3px 8px"),
+                                          textsize = "15px",
+                                          direction = "auto")) %>%
+  #label = ~paste('Borough:', borough, '\nAverage Land Value:', round(ave_borough, 2))) %>%
+  addLegend(pal = pal, values = ~ave_borough, opacity = 0.7, title = NULL, 
+            position = "bottomright")
+  
+
+# Plot boxplot for `ave_land` by borough. 
+box = dat_new %>% plot_ly(x = ~borough, y = ~ave_land, type = 'box', color = ~borough)
+crosstalk::bscols(map, box)
+
+```
+
+## Add School Districts to the map
+- Except Staten Island, all the other boroughs have more than one school districts
+```{r}
+# Plot leaflet map for school districts
+labels <- sprintf(
+  "<strong>Borough:</strong> %s<br/><strong>School District:</strong> %s<br/><strong>Average Land Value:</strong> %g",
+  nyc_school$borough, nyc_school$schooldist, nyc_school$ave_school
+) %>% 
+  lapply(htmltools::HTML)
+pal = colorFactor(c('#fed976', '#fc4e2a', '#bd0026', '#fd8d3c', '#ffffcc'), domain = nyc_school$borough)
+leaflet(nyc_school) %>%
+  addTiles() %>%
+  addPolygons(fillColor = ~pal(borough),
+              weight = 2,
+              opacity = 1,
+              color = 'white',
+              dashArray = '3',
+              fillOpacity = 0.7, 
+              highlight = highlightOptions(weight = 5,
+                                           color = "#666",
+                                           dashArray = "",
+                                           fillOpacity = 0.7,
+                                           bringToFront = TRUE),
+              label = labels,
+              labelOptions = labelOptions(style = list("font-weight" = "normal", 
+                                                       padding = "3px 8px"),
+                                          textsize = "15px",
+                                          direction = "auto")) %>%
+  #label = ~paste0('Borough: ', borough, 'School District: ', schooldist,  ' Average Land Value: ', round(ave_school, 2))) %>%
+  addLegend(pal = pal, values = ~borough, opacity = 0.7, 
+            title = NULL, position = "bottomright")
+#range(nyc_school$ave_school)
+
+```
+
+## Bar charts of four categorical variables VS. boroughs
+
+```{r}
+# Plot bar chart for number of school districts by borough
+borough = c('Bronx', 'Brooklyn', 'Manhattan', 'Queens', 'Staten Island')
+school_bar = numeric(5)
+j = 1
+for (i in borough) {
+  school_bar[j] = nrow(dat_new %>% group_by(borough, schooldist) %>% 
+                         summarise(n = n(), .groups = 'drop') %>% filter(borough == i))
+  j = j + 1
+}
+#school_bar
+bar_shcool = plot_ly(x = borough, y = school_bar, legendgroup = ~borough, 
+                      color = borough, type = 'bar') %>% 
+    add_text(
+      text = school_bar,
+      textfont = list(color = 'red'),
+      textposition = 'bottom center',
+      showlegend = FALSE,
+      cliponaxis = FALSE,
+      hoverinfo = 'none'
+    )
+
+# Plot bar char for number of police precinct district by borough
+police_bar = numeric(5)
+j = 1
+for (i in borough) {
+  police_bar[j] = nrow(dat_new %>% group_by(borough, policeprct) %>% 
+                         summarise(n = n(), .groups = 'drop') %>% filter(borough == i))
+  j = j + 1
+}
+#police_bar
+bar_police = plot_ly(x = borough, y = police_bar, legendgroup = ~borough, 
+                      color = borough, type = 'bar') %>% 
+    add_text(
+      text = police_bar,
+      textfont = list(color = 'red'),
+      textposition = 'bottom center',
+      showlegend = FALSE,
+      cliponaxis = FALSE,
+      hoverinfo = 'none'
+    )
+
+# Plot bar char for number of health center districts by boroughs
+health_bar = numeric(5)
+j = 1
+for (i in borough) {
+  health_bar[j] = nrow(dat_new %>% group_by(borough, healthcenterdistrict) %>% 
+                          summarise(n = n(), .groups = 'drop') %>% filter(borough == i))
+  j = j + 1
+}
+#health_bar
+bar_health = plot_ly(x = borough, y = health_bar, legendgroup = ~borough, 
+                       color = borough, type = 'bar') %>% 
+    add_text(
+      text = health_bar,
+      textfont = list(color = 'red'),
+      textposition = 'bottom center',
+      showlegend = FALSE,
+      cliponaxis = FALSE,
+      hoverinfo = 'none'
+    )
+
+# Plot bar chart for number of sanitation districts by boroughs 
+sani_bar = numeric(5)
+j = 1
+for (i in borough) {
+  sani_bar[j] = nrow(dat_new %>% group_by(borough, sanitdistrict) %>% 
+                         summarise(n = n(), .groups = 'drop') %>% filter(borough == i))
+  j = j + 1
+}
+#sani_bar
+bar_sani = plot_ly(x = borough, y = sani_bar, legendgroup = ~borough, 
+                      color = borough, type = 'bar') %>% 
+    add_text(
+      text = sani_bar,
+      textfont = list(color = 'red'),
+      textposition = 'bottom center',
+      showlegend = FALSE,
+      cliponaxis = FALSE,
+      hoverinfo = 'none'
+    )
+
+# Organize the above four plots in one page
+subplot(style(bar_shcool, showlegend = F), style(bar_police, showlegend = F),  
+        style(bar_health, showlegend = F), bar_sani, nrows = 2, margin = 0.08) %>%
+  layout(annotations = list( 
+    list(text = "Number of School Districts VS. Boroughs", x = 0, y = 1.03, 
+         showarrow = F, xref='paper', yref='paper', font = list(family = "Times New Roman", size = 13)), 
+    list(text = "Number of Police Precinct Districts VS. Boroughs", x= 1, y = 1.03, 
+         showarrow = F, xref='paper', yref='paper', font = list(family = "Times New Roman", size = 13)),
+    list(text = 'Number of Health Center Districts VS. Boroughs', x = 0, y = 0.46, showarrow = F,  
+         xref='paper', yref='paper', font = list(family = "Times New Roman", size = 13)),
+    list(text = 'Number of Sanitation Districts VS. Boroughs', x = 1, y = 0.46, showarrow = F,  
+         xref='paper', yref='paper', font = list(family = "Times New Roman", size = 13)))
+  ) 
+```
+
+
+
+## Shiny app
+
+```{r}
+setwd("/Users/sandanikumanayake/Desktop/STAT 697/GP 02/")
+shiny::shinyAppFile('app_v3.R')
+```
+
+
+## Conclusions
+
+- As we observed, the value (price) of land in New York is influenced significantly by it's location with Manhattan Borough having averagely the most priced land.
+
+- In Manhattan, school district 2, is generally associated with high land value as compared to the others.
+
+- Similarly, 14th to 18th police precincts;  health centered districts 13 and 15, sanitation district 5 are associated with high values of lands in Manhattan.  
+
