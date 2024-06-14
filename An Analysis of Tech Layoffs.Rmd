@@ -1,0 +1,225 @@
+---
+title: "An Analysis of Tech Layoffs"
+author: "Claire Casey, Sandani Kumanayake, &  Xander Schwartz"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  ioslides_presentation: default
+  beamer_presentation: default
+  slidy_presentation: default
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, message = F, warning = F, fig.height = 5, fig.width = 7)
+library(tidyverse)
+library(shiny)
+library(parsedate)
+library(Polychrome)
+library(plotly)
+library(pals)
+```
+
+## Introduction
+
+- Job security is an important factor for employers and employees alike
+- The tech industry, formerly known to many as being very secure, has suffered from instability (especially in the US) in recent months
+
+```{r, out.width= '70%', fig.align='center'}
+knitr::include_graphics('headlines.png')
+```
+
+
+## Research Questions
+
+- What is the extent of the impact on different industries worldwide due to mass tech layoffs?
+    - Are there any industries in particular that have had to let go of more employees this year?
+
+- Are there specific business sectors that are disproportionately affected by mass tech layoffs?
+    - Are tech start-ups versus established businesses suffering more?
+
+## Data
+
+- The data set was sourced from Kaggle.com.
+
+- The dataset was scraped from Layoffs.fyi, providing an opportunity to analyze recent mass layoffs and uncover valuable insights and patterns.
+
+
+## Variables
+
+
+```{r vars, out.width= '100%', fig.align='center'}
+
+knitr::include_graphics("var_description.png")
+
+```
+
+
+
+## Overview: Layoffs by Industry
+
+- Explore the density of layoffs across different industries within the time frame covered by the dataset.
+
+```{r, fig.height=4, fig.width=8}
+layoffs <- read_csv("layoffs_data.csv") %>% 
+  filter(!is.na(Laid_Off_Count))
+
+
+industries <- layoffs %>% 
+  group_by(Industry) %>% 
+  summarise(ind_ct = n())
+
+temp_layoffs <- layoffs %>% 
+  left_join(industries) %>%
+  filter(ind_ct > 40) %>%
+  mutate(industry2 = case_when(
+    str_detect(Industry, "Data") ~ "Technology",
+        str_detect(Industry, "Crypto") ~ "Technology",
+        str_detect(Industry, "Consumer") ~ "Consumer Driven",
+        str_detect(Industry, "Marketing") ~ "Consumer Driven",
+        str_detect(Industry, "Retail") ~ "Consumer Driven",
+        str_detect(Industry, "Transportation") ~ "Consumer Driven",
+            str_detect(Industry, "Security") ~ "Technology",
+            str_detect(Industry, "Real Estate") ~ "Consumer Driven",
+            str_detect(Industry, "Food") ~ "Consumer Driven",
+                str_detect(Industry, "Media") ~ "Consumer Driven",
+                    str_detect(Industry, "HR") ~ "Other",
+
+    T ~ Industry
+  ))
+
+ggplot(temp_layoffs, aes(x = Date, fill = industry2)) + geom_density(alpha = .5)+
+  scale_fill_manual(values=as.vector(polychrome(7))) + labs(fill = "Industry")
+ 
+
+```
+
+
+## Overview: Stages of A Company
+
+- IPO = "Initial Public Offering"
+    - When a privately owned company goes public it lists its shares on a stock exchange, making them available for purchase by the general public.
+  
+```{r, out.width= '60%', fig.align='center'}
+knitr::include_graphics("business_stages.png")
+```
+
+## USA: Layoffs by Stage 
+
+```{r, out.width= '70%', fig.align='center'}
+
+layoffs <- read_csv("layoffs_data.csv") %>% 
+  filter(!is.na(Percentage))
+
+layoffs <- read_csv("layoffs_data.csv") %>% 
+  filter(!is.na(Laid_Off_Count))
+
+countries <- layoffs %>% 
+  group_by(Country) %>% 
+  summarise(count_ct = n())
+
+industries <- layoffs %>% 
+  group_by(Industry) %>% 
+  summarise(ind_ct = n())
+
+layoffs2 <- layoffs %>% 
+  left_join(countries)  %>%
+  filter(count_ct >= 10) %>% 
+  left_join(industries) %>%
+  filter(ind_ct > 40)
+
+country_ind <- layoffs2 %>% 
+  group_by(Country, Industry) %>%
+  summarise(laid_off = sum(Laid_Off_Count, na.rm = T))
+
+worstOne <-  layoffs2 %>% 
+  group_by(Country, Industry, Company) %>%
+  summarise(laid_off_comp = sum(Laid_Off_Count, na.rm = T))
+
+worstCount <- worstOne %>% 
+  group_by(Country, Industry) %>%
+  summarise(laid_off_comp = max(laid_off_comp)) %>%
+  left_join(worstOne)
+
+country_ind2 <- country_ind %>% left_join(worstCount)
+
+#Layoffs by STAGE (USA)
+
+layoffs_by_stageUSA <- layoffs2 %>%
+  filter(Country == "United States") %>%
+  group_by(Stage) %>%
+  mutate(stage_layoffs = sum(Laid_Off_Count)) %>%
+  group_by(Industry) %>%
+  mutate(ind_pct = stage_layoffs/sum(stage_layoffs)) %>%
+    summarise(Industry = unique(Industry), Stage = unique(Stage), ind_pct = unique(ind_pct))
+  #mutate(country_percent = laid_off/sum(laid_off)) 
+  
+
+ggplotly(ggplot(layoffs_by_stageUSA, aes(x = Stage, y= Industry, fill = ind_pct, text = paste("% of ", Industry, " Layoffs: ",100*round(ind_pct, 2)))) +
+  geom_tile() +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+ scale_fill_viridis_c() +
+  labs(fill = "% Laid Off"),
+ tooltip = c("text"))
+
+```
+
+
+
+## Shiny App
+
+```{r}
+#setwd("/Users/clairecasey/Downloads/Proj3")
+shiny::shinyAppFile('app.R', options = list(height = 1000))
+```
+
+## Shiny App: Heat map
+
+- In the US, majority of layoffs across all industries are in Post-IPO stage
+- Established tech companies suffer more than start-ups
+- Can see this pattern in Canada, Australia, Israel and United Kingdom as well
+- Majority of tech layoffs in Germany, Brazil were in series funding stages
+- More data would tell a better story here
+
+## Limitations
+
+- Bias of country and industry. The United States is heavily featured compared to other countries in the dataset. Likewise certain industries seem over or underrepresented. For example, there are no manufacturing industries listed. 
+
+- Sample Size: The dataset represents a sample and may not encompass the entire population of layoffs. It is important to consider that the findings are based on the available data.
+
+- Missing Data: The dataset contains a significant number of missing values (NA) across various variables. This may limit the completeness and accuracy of the analysis for certain aspects.
+
+
+
+## Limitations
+
+- Data Source: The dataset was sourced from Layoffs.fyi, which may introduce biases or limitations inherent to the data collection process.  
+
+- External Factors: The analysis may not account for all external factors that could influence the occurrence and impact of mass layoffs, such as economic conditions, industry-specific dynamics, or company-specific circumstances.
+
+
+
+## Conclusions
+
+- COVID had a large effect on tech layoffs across all industries. In particular the travel industry was hit very hard in 2020. 
+
+- Clear relationship between company stage and tech layoffs. (Post-IPO/Established)
+
+- Some countries show different stage patterns. (i.e. Brazil, Germany)
+   - Cannot make any sound conclusions due to small sample size and missing data
+
+- Bigger cities tend to have more layoffs (due to location of HQ?) 
+
+## References
+
+
+https://www.kaggle.com/datasets/theakhilb/layoffs-data-2022
+
+https://gridline.co/knowledge-base/private-equity-stages-and-strategy/
+
+https://www.forbes.com/advisor/investing/initial-public-offering-ipo/
+
+https://www.wallstreetmojo.com/business-life-cycle/
+
+https://www.investopedia.com/articles/personal-finance/102015/series-b-c-funding-what-it-all-means-and-how-it-works.asp
+
+
